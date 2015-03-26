@@ -10,7 +10,7 @@ class Process:
                  # support for different buffer sizes.
     problemWidth = 50   # Total width of the problem. Used to work out which
                         # elements do NOT need to have values communicated to them
-                        # by virtue of 
+                        # by virtue of being at a boundary
     def __init__(self, N, iL, parent, lambd, tmean):
         self.N = N      # Number of elements we're responsible for computing
         self.iL = iL    # index of the left-most array element we're responsible for calculating
@@ -73,6 +73,8 @@ class Process:
         return tnext
 
     def mpiRecv(self, transTime, sendProc):
+        if self.j != sendProc.j:
+            return False
         ## We have just had data transferred to us from another processor
         if(sendProc == self.procL):
             self.WL[0] = self.parent.wct + transTime
@@ -88,6 +90,7 @@ class Process:
                     None
                 self.action = action
                 self.tnext = self.WR[0]
+        return True # Success
 
     def send(self):
         ## This gets called every time by the update function
@@ -170,16 +173,20 @@ class Process:
                 self.j += 1
                 self.WL = [None for x in self.WL]
                 self.WR = [None for x in self.WR]   # This is now the buffer for the NEXT level
+                self.XL = [False]; self.XR = [False];   # We haven't sent anything for this level yet
                 self.LNC = self.iL; self.RNC = self.iL + self.N - 1;
                 def action():
                     None
                 self.action = action
+                self.update()   # This is to get the first computation from the j+1 step to run
             else:
                 ## We cannot compute the next level yet
                 ## Wait for data
                 def action():
                     None
                 self.action = action
-                self.tnext = None
+                # FIXME - something is seriously wrong here. Sometimes (and just sometimes)
+                #         this tries to find min([]), and I don't understand why!
+                self.tnext = min([t for t in self.WL + self.WR if (t is not None and t > self.tnext)])
 
         # FIXME - put in communication calls, test against dummy HPC

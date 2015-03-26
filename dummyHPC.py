@@ -67,16 +67,21 @@ class dummyHPC:
         # Update the data we're storing
         self.wctList.append(self.wct)
         self.jList.append([x.j for x in self.procList])
-        self.WLList.append([all([(x is not None and x < self.wct) for x in P.WL]) for P in self.procList])
-        self.WRList.append([all([(x is not None and x < self.wct) for x in P.WR]) for P in self.procList])
+        self.WLList.append([all([(x is not None and x <= self.wct) for x in P.WL]) for P in self.procList])
+        self.WRList.append([all([(x is not None and x <= self.wct) for x in P.WR]) for P in self.procList])
         self.XLList.append([any([(x is True) for x in P.XL]) for P in self.procList])
         self.XRList.append([any([(x is True) for x in P.XR]) for P in self.procList])
 
     def mpiSend(self, sendProc, recvProc, size):
         # N.B. this is very definitely NOT a decent model for the communication
         # at this stage.
-        recvProc.mpiRecv(self.latency, sendProc)
-        return 0 # dummyHPC currently lives in a magical, magical world where there is infinite bandwidth
+        success = recvProc.mpiRecv(self.latency, sendProc)
+        if success:
+            return 0 # dummyHPC currently lives in a magical, magical world where there is infinite bandwidth
+        else:
+            # We're needing to wait for the other process to move to the next level
+            # tell me how long this will take
+            return recvProc.tnext
 
     def printToFile(self, outfileName):
         outfile = open(outfileName, "w")
@@ -128,70 +133,83 @@ def main():
     print("HPC.setupProcs()")
     HPC.setupProcs()
 
-    print("\nIs my wall-clock time actually zero..?")
-    print("print(HPC.getWCT())")
-    print(HPC.getWCT())
-
-    print("\nLet's see when each process is next going do something interesting...")
-    print("print([P.tnext for P in HPC.procList])")
-    print([P.tnext for P in HPC.procList])
-
-    print("\nLet's look at which elements need to be computed...")
-    print("print([(P.LNC, P.RNC) for P in HPCprocList])")
-    print([(P.LNC, P.RNC) for P in HPC.procList])
-
-    print("\nDo a single update and then look at the times and arrays...")
-    print("HPC.update()")
-    HPC.update()
-    print("print([P.tnext for P in HPC.procList])")
-    print([P.tnext for P in HPC.procList])
-    print("print([(P.LNC, P.RNC) for P in HPCprocList])")
-    print([(P.LNC, P.RNC) for P in HPC.procList])
-
-    print("\nDo three updates and then look at the times and arrays...")
-    print("HPC.update()")
-    HPC.update()
-    print("HPC.update()")
-    HPC.update()
-    print("HPC.update()")
-    HPC.update()
-    print("print([P.tnext for P in HPC.procList])")
-    print([P.tnext for P in HPC.procList])
-    print("print([(P.LNC, P.RNC) for P in HPCprocList])")
-    print([(P.LNC, P.RNC) for P in HPC.procList])
-
-    print("\nDo a single update and then look at the times and arrays...")
-    print("HPC.update()")
-    HPC.update()
-    print("print([P.tnext for P in HPC.procList])")
-    print([P.tnext for P in HPC.procList])
-    print("print([(P.LNC, P.RNC) for P in HPCprocList])")
-    print([(P.LNC, P.RNC) for P in HPC.procList])
-
-    print("\nDo four more updates and look at the times and arrays...")
-    print("HPC.update()")
-    HPC.update()
-    print("HPC.update()")
-    HPC.update()
-    print("HPC.update()")
-    HPC.update()
-    print("HPC.update()")
-    HPC.update()
-    print("print([P.tnext for P in HPC.procList])")
-    print([P.tnext for P in HPC.procList])
-    print("print([(P.LNC, P.RNC) for P in HPCprocList])")
-    print([(P.LNC, P.RNC) for P in HPC.procList])
-
-    print("\nDo 19 updates that I shalln't bother printing...")
-    for i in range(3):
-        print(i)
-        HPC.update()
-    print("print([P.tnext for P in HPC.procList])")
-    print([P.tnext for P in HPC.procList])
-    print("print([(P.LNC, P.RNC) for P in HPCprocList])")
-    print([(P.LNC, P.RNC) for P in HPC.procList])
+    #print("\nDo 19 updates that I shalln't bother printing...")
+    for i in range(400):
+        try:
+            HPC.update()
+        except Exception as e:
+            print e
+            break
 
     HPC.printToFile("trace.dat")
+    
+    print("Creating an second HPC...")
+    print("HPC2 = dummyHPC()")
+    HPC2 = dummyHPC()
+
+    print("\nAdding some processes...")
+    print("HPC2.addProc(10, 0, 1e+3, 1.0)")
+    HPC2.addProc(10, 0, 1e+3, 1.0)
+    print("HPC2.addProc(15, 10, 1e+3, 1.0)")
+    HPC2.addProc(15, 10, 1e+3, 1.0)
+    print("HPC2.addProc(15, 25, 1e+3, 1.0)")
+    HPC2.addProc(15, 25, 1e+3, 1.0)
+    print("HPC2.addProc(10, 40, 1e+3, 1.0)")
+    HPC2.addProc(10, 40, 1e+3, 1.0)
+
+    print("\nTelling the processes to set themselves up...")
+    print("HPC2.setupProcs()")
+    HPC2.setupProcs()
+
+    #print("\nDo 19 updates that I shalln't bother printing...")
+    for i in range(400):
+        try:
+            HPC2.update()
+        except Exception as e:
+            print e
+            break
+
+    HPC2.printToFile("trace2.dat")
+    
+    print("Creating an third HPC...")
+    print("HPC3 = dummyHPC()")
+    HPC3 = dummyHPC()
+
+    print("\nAdding some processes...")
+    print("HPC3.addProc(5, 0, 1e+3, 1.0)")
+    HPC3.addProc(5, 0, 1e+3, 1.0)
+    print("HPC3.addProc(5, 5, 1e+3, 1.0)")
+    HPC3.addProc(5, 5, 1e+3, 1.0)
+    print("HPC3.addProc(5, 10, 1e+3, 1.0)")
+    HPC3.addProc(5, 10, 1e+3, 1.0)
+    print("HPC3.addProc(5, 15, 1e+3, 1.0)")
+    HPC3.addProc(5, 15, 1e+3, 1.0)
+    print("HPC3.addProc(5, 20, 1e+3, 1.0)")
+    HPC3.addProc(5, 20, 1e+3, 1.0)
+    print("HPC3.addProc(5, 25, 1e+3, 1.0)")
+    HPC3.addProc(5, 25, 1e+3, 1.0)
+    print("HPC3.addProc(5, 30, 1e+3, 1.0)")
+    HPC3.addProc(5, 30, 1e+3, 1.0)
+    print("HPC3.addProc(5, 35, 1e+3, 1.0)")
+    HPC3.addProc(5, 35, 1e+3, 1.0)
+    print("HPC3.addProc(5, 40, 1e+3, 1.0)")
+    HPC3.addProc(5, 40, 1e+3, 1.0)
+    print("HPC3.addProc(5, 45, 1e+3, 1.0)")
+    HPC3.addProc(5, 45, 1e+3, 1.0)
+
+    print("\nTelling the processes to set themselves up...")
+    print("HPC3.setupProcs()")
+    HPC3.setupProcs()
+
+    #print("\nDo 19 updates that I shalln't bother printing...")
+    for i in range(400):
+        try:
+            HPC3.update()
+        except Exception as e:
+            print e
+            break
+
+    HPC3.printToFile("trace3.dat")
     
 
 if __name__ == "__main__":
