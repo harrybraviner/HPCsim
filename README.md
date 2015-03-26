@@ -19,9 +19,12 @@ The process object retatins the state of how much of the next timestep we've cal
 We store which elements of the field have been computed as follows:
 * `j` - the last timestep which was fully computed
 * `f[iL, iL + N]` - elements this process is responsible for computing.
-* `f[iL - rstencil, iL + N + rstencil]` - buffer of elements that this process is happy to accept.
+* `f[iL - rstencil, iL + N - 1 + rstencil]` - buffer of elements that this process is happy to accept.
 * `LNC` and `RNC` - the bounds of the array that has *not* been computed.
   Only these are explicitly represented, rather than `f`.
+* The arrays `WL` and `WR` hold the time at which the boundary points on the left and right sides
+  will arrive from the surrounding processes. If we don't yet know when a point will arrive
+  (i.e. the process has not yet leased a connection) the value is `None`.
 
 At this stage I'm assuming that the *buffer* at the left and right ends of our computational domain
 is the size of the numerical stencil - i.e. we only have sufficient information to compute all of the
@@ -48,9 +51,26 @@ This is a very basic strategy at the moment:
 * Compute the boundary points, send them to neighbours.
 * Compute the rest of the domain.
 
-## Random ideas
+## Ideas
 
+* Ratio of how long it takes to *actually* send some data versus how long it
+  would take in a network with no edge usage. Average this ratio as a measure
+  of network usage.
 * Visualisation functions. Would be nice te be able to 'play' the simulation in a step-forward fashion with breakpoints etc.
 * Visualisation of schedule of upcoming events.
   Logarithmic timescale.
   Colour coding for comms versus computing versus idle etc.
+
+## Outputs that we would like to get from this
+
+* The rate at which the computation proceeds.
+  i.e. how does `j` increase with wall-clock time.
+  More precisely, at what is the *last* wall-clock time at which a process reaches this value of `j`?
+
+## Things to do for second version
+
+* Simplify the model of computation. Don't worry about the process holding a linear array.
+  It can have a certain number of elements it needs to compute, a certain number that another
+  process is depending on, and certain numbers that it needs to receive from other processes.
+  Dependency lists of other processes. Do this in such a way that 1D, 2D, and 3D can be handled
+  in an almost identical fashion.

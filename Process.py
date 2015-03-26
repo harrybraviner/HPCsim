@@ -17,15 +17,17 @@ class Process:
         self.parent = parent    # Points to the parents node
         self.lambd = lambd  # Parameter to the exponential distribution I'm using for FLOP times
         self.tmean = tmean  # Mean time to do a FLOP
-        self.j = 0       # Initial condition - time is zero
-        self.tnext = 0   # Initial condition - the next time this process finishes a computation
-                         # zero since it has to be in the future for it to be noticed
-        self.tarrive = []   # Schedule of times at which packets will arrive
+        self.j = 0          # Initial condition - timestep is zero
+        self.tnext = 0      # Initial condition - the next time this process finishes a computation
+                            # zero since it has to be in the future for it to be noticed
+        self.tsend = None   # Time at which we will next check if we are able to send across the network
         self.LNC = iL; self.RNC = iL + N - 1; # We have not computed anything yet
         self.procL = None; self.procR = None; # Processes to the left and right in the computational domain
                                     # These are set up in the setup() function
-        self.wL = 0; self.wR = 0;   # Number of 'buffer' elements to the left and right that
-                                    # we know FOR LEVEL j+1.
+        self.WL = [None]; self.WR = [None]; # Times at which we will receive the 'buffer' elements to the
+                                            # left and right that FOR LEVEL j+1.
+        self.XL = [False]; self.XR = [False];   # Have we sent the data that needs to go to the left
+                                                # and right processes yet?
         def action():   # Function that holds the changes of state to be performed
             None        # between the current state and tnext
 
@@ -36,16 +38,21 @@ class Process:
         if (self.iL != 0):
             # If we are NOT touching the left boundary
             self.procL = self.parent.findProcL(self.iL)
-            # FIXME - write a function findProcL in the switch class
-            # that searches for the process with iL + N equal to the the calling value
         else:
             self.procL = None
+            self.WL = []    # FIXME - dirty hack, this will let us continue computing
+                            #         even if this process was simply missing, rather 
+                            #         than us being at the left-hand boundary!
 
-        if (self.iL + self.N != self.problemWidth - 1):
+        if (self.iL + self.N - 1 != self.problemWidth - 1):
             # If we are NOT touching the right boundary
-            self.procR = self.parent.findProcR(self.iL + self.N)
-            # FIXME - write a function findProcR in the switch class
-            # that searches for the process with iL equal to the the calling value
+            self.procR = self.parent.findProcR(self.iL + self.N - 1)
+        else:
+            self.procR = None
+            self.WR = []    # FIXME - dirty hack, this will let us continue computing
+                            #         even if this process was simply missing, rather 
+                            #         than us being at the left-hand boundary!
+
         self.update()
 
     def tComp(self):
@@ -65,6 +72,59 @@ class Process:
         # next process to interact with the rest of the network will be
         return tnext
 
+    def mpiRecv(self, transTime, sendProc):
+        ## We have just had data transferred to us from another processor
+        if(sendProc == self.procL):
+            self.WL[0] = self.parent.wct + transTime
+            if self.tnext is None:
+                def action():
+                    None
+                self.action = action
+                self.tnext = self.WL[0]
+        if(sendProc == self.procR):
+            self.WR[0] = self.parent.wct + transTime
+            if self.tnext is None:
+                def action():
+                    None
+                self.action = action
+                self.tnext = self.WR[0]
+
+    def send(self):
+        ## This gets called every time by the update function
+        ## We check if we have any unsent data that needs to be sent
+        ## We see if we can lease a network connection to do so
+        ## If we can, we send that data
+
+        tMinWait = None
+
+        # Do we have data to send to the left processor?
+        if (self.LNC > self.iL and self.procL is not None) and any([not x for x in self.XL]):
+            # Are we able to make the connection now?
+            tWait = self.parent.mpiSend(self, self.procL, 1)
+            if (tWait == 0):
+                self.XL = [True]     # All the data is on its way
+            else:
+                # Is this communication the soonest one that we should attempt?
+                if (tMinWait is None or tWait < tMinWait):
+                    tMinWait = tWait
+
+        # Do we have data to send to the right processor?
+        if (self.RNC < self.iL + self.N - 1 and self.procR is not None and any([not x for x in self.XR])):
+            # Are we able to make the connection now?
+            tWait = self.parent.mpiSend(self, self.procR, 1)
+            if (tWait == 0):
+                self.XR = [True]     # All the data is on its way
+            else:
+                # Is this communication the soonest one that we should attempt?
+                if (tMinWait is None or tWait < tMinWait):
+                    tMinWait = tWait
+
+        # If we are waiting for a communication channel to become available,
+        # note this down in self.tsend
+        self.tsend = tMinWait
+                
+
+
     def update(self):
         ## This is the section that should have some scope for being modified
         ## to implement different strategies
@@ -81,23 +141,45 @@ class Process:
             ## Compute the left-most point so we can send it to our left-ward neighbour
             def action():
                 self.LNC +=1
+                self.send() # Handles invoking mpiSend
             self.action = action
             self.tnext += self.tComp()
         elif (self.RNC == self.iL + self.N - 1):
             ## Compute the right-most point so we can send it to our right-ward neighbour
             def action():
                 self.RNC -=1
+                self.send() # Handles invoking mpiSend
             self.action = action
             self.tnext += self.tComp()
-        else:
+        elif (self.LNC is not None and self.RNC is not None):
+            ## The boundary points that we want to transmit have all been computed,
+            ## but we still have the interior of this level to compute
             ## If we get here we can just do the rest of our computation at this
             ## level and not worry about having to send any of it over the network
             def action():
                 self.LNC = None
                 self.RNC = None
-                self.j += 1     # We will have computed everything and may move to the next level
+                #self.j += 1     # We will have computed everything but may not necessarrily
+                                 # move to the next level since data may not have arrived at us
             self.action = action
-            if self.RNC is not None:
-                if self.LNC is not None:
-                    self.tnext += self.tComps(self.RNC - self.LNC + 1)
+            self.tnext += self.tComps(self.RNC - self.LNC + 1)
+        elif (self.LNC is None and self.RNC is None):
+            ## We have completed the entire computation at level j
+            ## Has all of the data we need to compute level j+1 arrived?
+            if all([(x is not None and x <= self.tnext)for x in self.WL + self.WR]):
+                self.j += 1
+                self.WL = [None for x in self.WL]
+                self.WR = [None for x in self.WR]   # This is now the buffer for the NEXT level
+                self.LNC = self.iL; self.RNC = self.iL + self.N - 1;
+                def action():
+                    None
+                self.action = action
+            else:
+                ## We cannot compute the next level yet
+                ## Wait for data
+                def action():
+                    None
+                self.action = action
+                self.tnext = None
+
         # FIXME - put in communication calls, test against dummy HPC

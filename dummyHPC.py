@@ -7,9 +7,18 @@ from Process import Process
 ## of the Process objects.
 
 class dummyHPC:
+
+    latency = 20.0  # Latency. Crap model. Doesn't care about topology or any sort of stochasticity.
+
     def __init__(self):
         self.procList = []  # List holding all of the processes
         self.wct = 0.0      # Wall-clock time
+        self.wctList = []   # Holds a list of wall clock times from each update
+        self.jList = []     # Holds lists of j(t) for each process, appended to at each update
+        self.WLList = []    # Has the process received all the left-end data?
+        self.WRList = []    # Has the process received all the right-end data?
+        self.XLList = []    # Does the process have any left-end data to send?
+        self.XRList = []    # Does the process have any right-end data to send?
 	
     def getWCT(self):
         return self.wct
@@ -29,7 +38,7 @@ class dummyHPC:
         # is immediately to the left of the left-most element of the calling function (iL)
         retProc = None
         for P in self.procList:
-            if (P.iL + P.N) == iL - 1:
+            if (P.iL + P.N - 1) == iL - 1:
                 retProc = P
         return retProc
 
@@ -46,7 +55,7 @@ class dummyHPC:
     def nextTime(self):
         # Search for the process with the smallest tnext that is greater or equal now
         return reduce(lambda a, b : a if a[1] < b[1] else b,
-                      [(P, P.tnext) for P in self.procList if P.tnext >= self.wct])
+                      [(P, P.tnext) for P in self.procList if (P.tnext >= self.wct and P.tnext is not None)])
 
     def update(self):
         # Get the process with the next smallest waiting time
@@ -55,6 +64,48 @@ class dummyHPC:
         P.update()
         # Everything up to t has now happened, so update the wall-clock time
         self.wct = t
+        # Update the data we're storing
+        self.wctList.append(self.wct)
+        self.jList.append([x.j for x in self.procList])
+        self.WLList.append([all([(x is not None and x < self.wct) for x in P.WL]) for P in self.procList])
+        self.WRList.append([all([(x is not None and x < self.wct) for x in P.WR]) for P in self.procList])
+        self.XLList.append([any([(x is True) for x in P.XL]) for P in self.procList])
+        self.XRList.append([any([(x is True) for x in P.XR]) for P in self.procList])
+
+    def mpiSend(self, sendProc, recvProc, size):
+        # N.B. this is very definitely NOT a decent model for the communication
+        # at this stage.
+        recvProc.mpiRecv(self.latency, sendProc)
+        return 0 # dummyHPC currently lives in a magical, magical world where there is infinite bandwidth
+
+    def printToFile(self, outfileName):
+        outfile = open(outfileName, "w")
+        # Print a header
+        outfile.write("#t\t")
+        for x in range(len(self.procList)):
+
+            outfile.write("\tXWLP" + str(x));
+            outfile.write("\tjP" + str(x));
+            outfile.write("\tWXRP" + str(x));
+        outfile.write("\n")
+
+        # Write lines for each wall-clock time
+        def TF(x):
+            if x:
+                return "T"
+            else:
+                return "F"
+        for x in range(len(self.wctList)):
+            outfile.write(str(self.wctList[x]))
+            for y in range(len(self.procList)):
+                outfile.write("\t" + TF(self.XLList[x][y]))
+                outfile.write(TF(self.WLList[x][y]))
+                outfile.write("\t" + str(self.jList[x][y]))
+                outfile.write("\t" + TF(self.WRList[x][y]))
+                outfile.write(TF(self.XRList[x][y]))
+            outfile.write("\n")
+
+        outfile.close()
 
 ## Unit testing - everything below here is not part of the object itself
 
@@ -130,6 +181,17 @@ def main():
     print([P.tnext for P in HPC.procList])
     print("print([(P.LNC, P.RNC) for P in HPCprocList])")
     print([(P.LNC, P.RNC) for P in HPC.procList])
+
+    print("\nDo 19 updates that I shalln't bother printing...")
+    for i in range(3):
+        print(i)
+        HPC.update()
+    print("print([P.tnext for P in HPC.procList])")
+    print([P.tnext for P in HPC.procList])
+    print("print([(P.LNC, P.RNC) for P in HPCprocList])")
+    print([(P.LNC, P.RNC) for P in HPC.procList])
+
+    HPC.printToFile("trace.dat")
     
 
 if __name__ == "__main__":
